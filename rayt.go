@@ -1,8 +1,8 @@
 // TODO:
-// - make surface "splitable"
-// - create mechanism to produce rays (from eye trough surface)
+// - make view "splitable"
+// - create mechanism to produce rays (from eye trough view)
 // - create func to update ray color based on colision
-// - fill surface values based on rays
+// - fill view values based on rays
 // - write tests for all new funcs
 // - parallelize
 // - read scene info from json file
@@ -27,17 +27,17 @@ const (
 func main() {
 	log.Println("starting")
 
-	sc, surf, err := readInput()
+	sc, v, err := readInput()
 	if err != nil {
 		log.Fatalln(err)
 	}
-	draw(sc, &surf)
-	save(surf, "out.png")
+	draw(sc, &v)
+	save(v, "out.png")
 
 	log.Println("done")
 }
 
-func readInput() (scene, surface, error) {
+func readInput() (scene, view, error) {
 	sc := scene{
 		objs: []obj{
 			sphere{rad: 10},
@@ -46,25 +46,25 @@ func readInput() (scene, surface, error) {
 		light: point{x: 100, y: 0, z: 0},
 	}
 
-	surf := surface{
+	v := view{
 		grid: make([][]color.RGBA, height),
 	}
-	for i := range surf.grid {
-		surf.grid[i] = make([]color.RGBA, width)
-		for j := range surf.grid[i] {
-			surf.grid[i][j].A = 255
-			surf.grid[i][j].R = uint8(i*i + j*j)
-			surf.grid[i][j].G = uint8(i*i + j*j)
-			surf.grid[i][j].B = uint8(i*i + j*j)
+	for i := range v.grid {
+		v.grid[i] = make([]color.RGBA, width)
+		for j := range v.grid[i] {
+			v.grid[i][j].A = 255
+			v.grid[i][j].R = 50
+			v.grid[i][j].G = 50
+			v.grid[i][j].B = 50
 		}
 	}
 
-	return sc, surf, nil
+	return sc, v, nil
 }
 
-func draw(sc scene, surf *surface) {}
+func draw(sc scene, v *view) {}
 
-func save(surf surface, fname string) {
+func save(v view, fname string) {
 	out, err := os.Create(fname)
 	if err != nil {
 		log.Println(err)
@@ -72,7 +72,7 @@ func save(surf surface, fname string) {
 	}
 	defer out.Close()
 
-	if err = png.Encode(out, surf); err != nil {
+	if err = png.Encode(out, v); err != nil {
 		log.Println(err)
 	}
 }
@@ -82,14 +82,20 @@ type scene struct {
 	eye, light point
 }
 
-type surface struct {
+type view struct {
 	grid [][]color.RGBA
 }
 
+func (v view) sub(a1, b1, a2, b2 int) view {
+	res := v
+	// TODO
+	return res
+}
+
 // implements image.Image
-func (s surface) ColorModel() color.Model { return color.RGBAModel }
-func (s surface) Bounds() image.Rectangle { return image.Rect(0, 0, len(s.grid[0]), len(s.grid)) }
-func (s surface) At(x, y int) color.Color { return s.grid[y][x] }
+func (s view) ColorModel() color.Model { return color.RGBAModel }
+func (s view) Bounds() image.Rectangle { return image.Rect(0, 0, len(s.grid[0]), len(s.grid)) }
+func (s view) At(x, y int) color.Color { return s.grid[y][x] }
 
 type obj interface {
 	intersect(l ray) []point
