@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"image/color"
 	"testing"
 )
 
@@ -100,6 +102,58 @@ func TestIntersect(t *testing.T) {
 			if !equalsp(v, c.res[i]) {
 				t.Errorf("%v.intersect(%v) = %v; got: %v", c.a, c.b, c.res, got)
 				break
+			}
+		}
+	}
+}
+
+func TestForeach(t *testing.T) {
+	v := view{
+		c:  make([][]color.RGBA, 3),
+		e1: point{1, 0, 0},
+		e2: point{0, 0, 0},
+		e3: point{0, 1, 0},
+		e4: point{1, 1, 0},
+	}
+	for i := range v.c {
+		v.c[i] = make([]color.RGBA, 3)
+	}
+
+	got := make([][]point, 3)
+	for i := range got {
+		got[i] = make([]point, 3)
+	}
+	want := [][]point{
+		[]point{point{0, 0, 0}, point{0.5, 0, 0}, point{1, 0, 0}},
+		[]point{point{0, 0.5, 0}, point{0.5, 0.5, 0}, point{1, 0.5, 0}},
+		[]point{point{0, 1, 0}, point{0.5, 1, 0}, point{1, 1, 0}},
+	}
+
+	i := 0
+	v.foreach(func(_, _ int, p point) {
+		got[i%3][i/3] = p
+		i++
+	})
+
+	for i := range got {
+		for j := range got[i] {
+			if !equalsp(got[i][j], want[i][j]) {
+				msg := "view.foreach\nwant:\n"
+				for x := 0; x < len(want); x++ {
+					for y := 0; y < len(want[x]); y++ {
+						msg += fmt.Sprint(want[x][y])
+					}
+					msg += "\n"
+				}
+				msg += "\ngot:\n"
+				for x := 0; x < len(got); x++ {
+					for y := 0; y < len(got[x]); y++ {
+						msg += fmt.Sprint(got[x][y])
+					}
+					msg += "\n"
+				}
+				t.Error(msg)
+				return
 			}
 		}
 	}

@@ -1,5 +1,4 @@
 // TODO:
-// - make view "splitable"
 // - create mechanism to produce rays (from eye trough view)
 // - create func to update ray color based on colision
 // - fill view values based on rays
@@ -40,29 +39,61 @@ func main() {
 func readInput() (scene, view, error) {
 	sc := scene{
 		objs: []obj{
-			sphere{rad: 10},
+			sphere{
+				center: point{0, 0, 0},
+				rad:    15,
+				c:      color.RGBA{A: 255, R: 50, G: 200, B: 200},
+			},
 		},
-		eye:   point{x: 30, y: 30, z: 30},
-		light: point{x: 100, y: 0, z: 0},
+		eye:   point{x: 0, y: 0, z: 30},
+		light: point{x: 100, y: 100, z: 0},
 	}
 
 	v := view{
-		grid: make([][]color.RGBA, height),
+		c:  make([][]color.RGBA, height),
+		e1: point{10, 10, 15},
+		e2: point{10, -10, 15},
+		e3: point{-10, -10, 15},
+		e4: point{-10, 10, 15},
 	}
-	for i := range v.grid {
-		v.grid[i] = make([]color.RGBA, width)
-		for j := range v.grid[i] {
-			v.grid[i][j].A = 255
-			v.grid[i][j].R = 50
-			v.grid[i][j].G = 50
-			v.grid[i][j].B = 50
+	for i := range v.c {
+		v.c[i] = make([]color.RGBA, width)
+		for j := range v.c[i] {
+			v.c[i][j].A = 255
+			v.c[i][j].R = 50
+			v.c[i][j].G = 50
+			v.c[i][j].B = 50
 		}
 	}
 
 	return sc, v, nil
 }
 
-func draw(sc scene, v *view) {}
+func draw(sc scene, v *view) {
+	v.foreach(func(x, y int, p point) {
+		r := ray{start: sc.eye, vec: p}
+		var fobj obj
+		var fp point
+		mind := math.MaxFloat64
+		for _, v := range sc.objs {
+			hits := v.intersect(r)
+			// TODO no intersections found. check scene and view creation.
+			for _, p := range hits {
+				d := distpp(p, r.start)
+				if d < mind {
+					fobj = v
+					fp = p
+					mind = d
+				}
+			}
+		}
+		if fobj == nil {
+			// no intersections, keep default color
+			return
+		}
+		v.c[y][x] = fobj.rayc(fp, sc.light)
+	})
+}
 
 func save(v view, fname string) {
 	out, err := os.Create(fname)
@@ -83,22 +114,53 @@ type scene struct {
 }
 
 type view struct {
-	grid [][]color.RGBA
+	e1, e2, e3, e4 point
+	c              [][]color.RGBA
 }
 
-func (v view) sub(a1, b1, a2, b2 int) view {
+func (v view) sub(x1, x2, y1, y2 int) view {
 	res := v
-	// TODO
+	res.c = res.c[y1:y2]
+	for i := range res.c {
+		res.c[i] = res.c[i][x1:x2]
+	}
 	return res
+}
+
+func (v view) foreach(f func(int, int, point)) {
+	w := len(v.c) - 1
+	h := len(v.c[0]) - 1
+	for i := 0; i < h+1; i++ {
+		c1 := float64(i) / float64(h)
+		a := point{
+			x: v.e2.x + (v.e1.x-v.e2.x)*c1,
+			y: v.e2.y + (v.e1.y-v.e2.y)*c1,
+			z: v.e2.z + (v.e1.z-v.e2.z)*c1,
+		}
+		b := point{
+			x: v.e3.x + (v.e4.x-v.e3.x)*c1,
+			y: v.e3.y + (v.e4.y-v.e3.y)*c1,
+			z: v.e3.z + (v.e4.z-v.e3.z)*c1,
+		}
+		for j := 0; j < w+1; j++ {
+			c2 := float64(j) / float64(w)
+			f(i, j, point{
+				x: a.x + (b.x-a.x)*c2,
+				y: a.y + (b.y-a.y)*c2,
+				z: a.z + (b.z-a.z)*c2,
+			})
+		}
+	}
 }
 
 // implements image.Image
 func (s view) ColorModel() color.Model { return color.RGBAModel }
-func (s view) Bounds() image.Rectangle { return image.Rect(0, 0, len(s.grid[0]), len(s.grid)) }
-func (s view) At(x, y int) color.Color { return s.grid[y][x] }
+func (s view) Bounds() image.Rectangle { return image.Rect(0, 0, len(s.c[0]), len(s.c)) }
+func (s view) At(x, y int) color.Color { return s.c[y][x] }
 
 type obj interface {
 	intersect(l ray) []point
+	rayc(p, l point) color.RGBA
 }
 
 type point struct {
@@ -153,6 +215,7 @@ func (l ray) projp(p point) point {
 type sphere struct {
 	center point
 	rad    float64
+	c      color.RGBA
 }
 
 func (s sphere) intersect(l ray) []point {
@@ -187,6 +250,31 @@ func (s sphere) intersect(l ray) []point {
 			z: l.start.z + l.vec.z*(dlp+di)/ll,
 		},
 	}
+}
+
+func (s sphere) rayc(p, l point) color.RGBA {
+	lenr := math.Sqrt(math.Pow(l.x-p.x, 2) + math.Pow(l.y-p.x, 2) + math.Pow(l.z-p.z, 2))
+	lenn := math.Sqrt(math.Pow(s.center.x-p.x, 2) + math.Pow(s.center.y-p.x, 2) + math.Pow(s.center.z-p.z, 2))
+
+	rnorm := ray{start: p, vec: point{
+		x: (l.x - p.x) / lenr,
+		y: (l.y - p.y) / lenr,
+		z: (l.z - p.z) / lenr,
+	}}
+	nnorm := ray{start: s.center, vec: point{
+		x: (s.center.x - p.x) / lenn,
+		y: (s.center.y - p.y) / lenn,
+		z: (s.center.z - p.z) / lenn,
+	}}
+
+	shade := dotProd(rnorm, nnorm)
+
+	res := s.c
+	res.R = uint8(float64(res.R) * (0.2 + (1-0.2)*shade))
+	res.G = uint8(float64(res.G) * (0.2 + (1-0.2)*shade))
+	res.B = uint8(float64(res.B) * (0.2 + (1-0.2)*shade))
+
+	return res
 }
 
 func dotProd(a, b ray) float64 {
