@@ -1,7 +1,4 @@
 // TODO:
-// - write tests for distrp
-// - write tests for ray.projp
-// - write tests for sphere.intersect
 // - make surface "splitable"
 // - create mechanism to produce rays (from eye trough surface)
 // - create func to update ray color based on colision
@@ -137,13 +134,13 @@ func (l ray) projp(p point) point {
 	if dpvu < 0 {
 		return l.start
 	}
-	lv := l.vec.len()
+	lv := math.Pow(l.vec.len(), 2)
 	c := dpvu / lv
 
 	return point{
-		x: p.x + l.vec.x*c,
-		y: p.y + l.vec.y*c,
-		z: p.z + l.vec.z*c,
+		x: l.start.x + l.vec.x*c,
+		y: l.start.y + l.vec.y*c,
+		z: l.start.z + l.vec.z*c,
 	}
 }
 
@@ -160,7 +157,7 @@ func (s sphere) intersect(l ray) []point {
 		return nil
 	}
 	// only one point, which is projection of sphere center onto ray
-	if dcl == 0 {
+	if dcl == s.rad {
 		// TODO avoid recomputation of projection?
 		return []point{l.projp(s.center)}
 	}
