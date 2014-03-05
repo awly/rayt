@@ -1,7 +1,4 @@
 // TODO:
-// - create mechanism to produce rays (from eye trough view)
-// - create func to update ray color based on colision
-// - fill view values based on rays
 // - write tests for all new funcs
 // - parallelize
 // - read scene info from json file
@@ -19,8 +16,9 @@ import (
 )
 
 const (
-	width  = 1000
-	height = 1000
+	width   = 1000
+	height  = 1000
+	ambient = 0.1
 )
 
 func main() {
@@ -45,16 +43,16 @@ func readInput() (scene, view, error) {
 				c:      color.RGBA{A: 255, R: 50, G: 200, B: 200},
 			},
 		},
-		eye:   point{x: 0, y: 0, z: 30},
-		light: point{x: 100, y: 100, z: 0},
+		eye:   point{x: 0, y: 0, z: 50},
+		light: point{x: 100, y: 100, z: -100},
 	}
 
 	v := view{
 		c:  make([][]color.RGBA, height),
-		e1: point{10, 10, 15},
-		e2: point{10, -10, 15},
-		e3: point{-10, -10, 15},
-		e4: point{-10, 10, 15},
+		e1: point{10, 10, 25},
+		e2: point{10, -10, 25},
+		e3: point{-10, -10, 25},
+		e4: point{-10, 10, 25},
 	}
 	for i := range v.c {
 		v.c[i] = make([]color.RGBA, width)
@@ -71,7 +69,7 @@ func readInput() (scene, view, error) {
 
 func draw(sc scene, v *view) {
 	v.foreach(func(x, y int, p point) {
-		r := ray{start: sc.eye, vec: p}
+		r := ray{start: sc.eye, vec: point{p.x - sc.eye.x, p.y - sc.eye.y, p.z - sc.eye.z}}
 		var fobj obj
 		var fp point
 		mind := math.MaxFloat64
@@ -268,11 +266,14 @@ func (s sphere) rayc(p, l point) color.RGBA {
 	}}
 
 	shade := dotProd(rnorm, nnorm)
+	if shade < 0 {
+		shade = 0
+	}
 
 	res := s.c
-	res.R = uint8(float64(res.R) * (0.2 + (1-0.2)*shade))
-	res.G = uint8(float64(res.G) * (0.2 + (1-0.2)*shade))
-	res.B = uint8(float64(res.B) * (0.2 + (1-0.2)*shade))
+	res.R = uint8(float64(res.R) * (ambient + (1-ambient)*shade))
+	res.G = uint8(float64(res.G) * (ambient + (1-ambient)*shade))
+	res.B = uint8(float64(res.B) * (ambient + (1-ambient)*shade))
 
 	return res
 }
