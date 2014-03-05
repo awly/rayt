@@ -44,7 +44,7 @@ func readInput() (scene, view, error) {
 			},
 		},
 		eye:   point{x: 0, y: 0, z: 50},
-		light: point{x: 100, y: 100, z: -100},
+		light: point{x: 100, y: 100, z: 100},
 	}
 
 	v := view{
@@ -251,18 +251,18 @@ func (s sphere) intersect(l ray) []point {
 }
 
 func (s sphere) rayc(p, l point) color.RGBA {
-	lenr := math.Sqrt(math.Pow(l.x-p.x, 2) + math.Pow(l.y-p.x, 2) + math.Pow(l.z-p.z, 2))
-	lenn := math.Sqrt(math.Pow(s.center.x-p.x, 2) + math.Pow(s.center.y-p.x, 2) + math.Pow(s.center.z-p.z, 2))
+	lenr := distpp(l, p)
+	lenn := distpp(p, s.center)
 
 	rnorm := ray{start: p, vec: point{
 		x: (l.x - p.x) / lenr,
 		y: (l.y - p.y) / lenr,
 		z: (l.z - p.z) / lenr,
 	}}
-	nnorm := ray{start: s.center, vec: point{
-		x: (s.center.x - p.x) / lenn,
-		y: (s.center.y - p.y) / lenn,
-		z: (s.center.z - p.z) / lenn,
+	nnorm := ray{start: p, vec: point{
+		x: (p.x - s.center.x) / lenn,
+		y: (p.y - s.center.y) / lenn,
+		z: (p.z - s.center.z) / lenn,
 	}}
 
 	shade := dotProd(rnorm, nnorm)
