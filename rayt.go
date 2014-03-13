@@ -7,18 +7,22 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"log"
 	"math"
 	"os"
+	"runtime"
 )
 
 const (
 	width   = 1000
 	height  = 1000
 	ambient = 0.1
+	chunkw  = 256 // chunk width for pardraw
+	chunkh  = 256 // chunk height for pardraw
 )
 
 func main() {
@@ -28,7 +32,7 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	draw(sc, &v)
+	pardraw(sc, &v, runtime.GOMAXPROCS(0))
 	save(v, "out.png")
 
 	log.Println("done")
@@ -67,6 +71,23 @@ func readInput() (scene, view, error) {
 	return sc, v, nil
 }
 
+// nw - number of concurrent workers
+func pardraw(sc scene, v *view, nw int) {
+	work := make([]*view, 0)
+	for x := 0; x < len(v.c[0]); x += chunkw {
+		for y := 0; y < len(v.c); y += chunkh {
+			nc := v.sub(
+				x, min(x+chunkw, len(v.c[0])),
+				y, min(y+chunkh, len(v.c)))
+			work = append(work, nc)
+			fmt.Println(nc.e1, nc.e2, nc.e3, nc.e4)
+		}
+	}
+	for _, w := range work {
+		draw(sc, w)
+	}
+}
+
 func draw(sc scene, v *view) {
 	v.foreach(func(x, y int, p point) {
 		r := ray{start: sc.eye, vec: point{p.x - sc.eye.x, p.y - sc.eye.y, p.z - sc.eye.z}}
@@ -75,7 +96,6 @@ func draw(sc scene, v *view) {
 		mind := math.MaxFloat64
 		for _, v := range sc.objs {
 			hits := v.intersect(r)
-			// TODO no intersections found. check scene and view creation.
 			for _, p := range hits {
 				d := distpp(p, r.start)
 				if d < mind {
@@ -116,13 +136,38 @@ type view struct {
 	c              [][]color.RGBA
 }
 
-func (v view) sub(x1, x2, y1, y2 int) view {
+func (v view) sub(x1, x2, y1, y2 int) *view {
+	fmt.Println(x1, x2, y1, y2)
 	res := v
-	res.c = res.c[y1:y2]
+
+	// make a separate copy of v.c to prevent modifying v.c[i] slices
+	res.c = make([][]color.RGBA, y2-y1)
+	copy(res.c, v.c[y1:y2])
+
 	for i := range res.c {
 		res.c[i] = res.c[i][x1:x2]
 	}
-	return res
+	res.e1 = point{
+		x: v.e1.x + (v.e2.x-v.e1.x)*(float64(len(v.c[0])-x2))/float64(len(v.c[0])) + (v.e4.x-v.e1.x)*float64(y1)/float64(len(v.c)),
+		y: v.e1.y + (v.e2.y-v.e1.y)*(float64(len(v.c[0])-x2))/float64(len(v.c[0])) + (v.e4.y-v.e1.y)*float64(y1)/float64(len(v.c)),
+		z: v.e1.z + (v.e2.z-v.e1.z)*(float64(len(v.c[0])-x2))/float64(len(v.c[0])) + (v.e4.z-v.e1.z)*float64(y1)/float64(len(v.c)),
+	}
+	res.e2 = point{
+		x: v.e2.x + (v.e1.x-v.e2.x)*(float64(x1))/float64(len(v.c[0])) + (v.e3.x-v.e2.x)*float64(y1)/float64(len(v.c)),
+		y: v.e2.y + (v.e1.y-v.e2.y)*(float64(x1))/float64(len(v.c[0])) + (v.e3.y-v.e2.y)*float64(y1)/float64(len(v.c)),
+		z: v.e2.z + (v.e1.z-v.e2.z)*(float64(x1))/float64(len(v.c[0])) + (v.e3.z-v.e2.z)*float64(y1)/float64(len(v.c)),
+	}
+	res.e3 = point{
+		x: v.e3.x + (v.e4.x-v.e3.x)*(float64(x1))/float64(len(v.c[0])) + (v.e2.x-v.e3.x)*float64(len(v.c)-y2)/float64(len(v.c)),
+		y: v.e3.y + (v.e4.y-v.e3.y)*(float64(x1))/float64(len(v.c[0])) + (v.e2.y-v.e3.y)*float64(len(v.c)-y2)/float64(len(v.c)),
+		z: v.e3.z + (v.e4.z-v.e3.z)*(float64(x1))/float64(len(v.c[0])) + (v.e2.z-v.e3.z)*float64(len(v.c)-y2)/float64(len(v.c)),
+	}
+	res.e4 = point{
+		x: v.e4.x + (v.e3.x-v.e4.x)*(float64(len(v.c[0])-x2))/float64(len(v.c[0])) + (v.e1.x-v.e4.x)*float64(len(v.c)-y2)/float64(len(v.c)),
+		y: v.e4.y + (v.e3.y-v.e4.y)*(float64(len(v.c[0])-x2))/float64(len(v.c[0])) + (v.e1.y-v.e4.y)*float64(len(v.c)-y2)/float64(len(v.c)),
+		z: v.e4.z + (v.e3.z-v.e4.z)*(float64(len(v.c[0])-x2))/float64(len(v.c[0])) + (v.e1.z-v.e4.z)*float64(len(v.c)-y2)/float64(len(v.c)),
+	}
+	return &res
 }
 
 func (v view) foreach(f func(int, int, point)) {
@@ -280,4 +325,11 @@ func (s sphere) rayc(p, l point) color.RGBA {
 
 func dotProd(a, b ray) float64 {
 	return a.vec.x*b.vec.x + a.vec.y*b.vec.y + a.vec.z*b.vec.z
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
