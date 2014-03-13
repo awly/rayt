@@ -11,31 +11,38 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"log"
 	"math"
 	"os"
 	"runtime"
+	"sync"
+	"time"
 )
 
 const (
-	width   = 1000
-	height  = 1000
-	ambient = 0.1
-	chunkw  = 256 // chunk width for pardraw
-	chunkh  = 256 // chunk height for pardraw
+	width         = 10000
+	height        = 10000
+	ambient       = 0.1
+	chunkw        = 256 // chunk width for pardraw
+	chunkh        = 256 // chunk height for pardraw
+	progressScale = 50
+	outfname      = "out.png"
 )
 
 func main() {
-	log.Println("starting")
-
 	sc, v, err := readInput()
 	if err != nil {
-		log.Fatalln(err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
+	start := time.Now()
 	pardraw(sc, &v, runtime.GOMAXPROCS(0))
-	save(v, "out.png")
-
-	log.Println("done")
+	fmt.Println("\nrendered in", time.Since(start))
+	fmt.Println("writing to", outfname)
+	if err = save(v, outfname); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("done")
 }
 
 func readInput() (scene, view, error) {
@@ -48,7 +55,7 @@ func readInput() (scene, view, error) {
 			},
 		},
 		eye:   point{x: 0, y: 0, z: 50},
-		light: point{x: 100, y: 100, z: 100},
+		light: point{x: 50, y: 50, z: 100},
 	}
 
 	v := view{
@@ -73,18 +80,59 @@ func readInput() (scene, view, error) {
 
 // nw - number of concurrent workers
 func pardraw(sc scene, v *view, nw int) {
-	work := make([]*view, 0)
+	// start workers
+	wg := &sync.WaitGroup{}
+	out := make(chan *view)
+	upd := make(chan struct{})
+	done := make(chan struct{})
+	for i := 0; i < nw; i++ {
+		wg.Add(1)
+		go worker(sc, out, upd, wg)
+	}
+
+	// progress bar
+	go progress((len(v.c)/chunkh+1)*(len(v.c[0])/chunkw+1), upd, done)
+
+	// send chunks to process
 	for x := 0; x < len(v.c[0]); x += chunkw {
 		for y := 0; y < len(v.c); y += chunkh {
 			nc := v.sub(
 				x, min(x+chunkw, len(v.c[0])),
 				y, min(y+chunkh, len(v.c)))
-			work = append(work, nc)
-			fmt.Println(nc.e1, nc.e2, nc.e3, nc.e4)
+			out <- nc
 		}
 	}
-	for _, w := range work {
+	// signal workers to stop and wait for them
+	close(out)
+	wg.Wait()
+	close(upd)
+	<-done
+}
+
+func progress(total int, upd, done chan struct{}) {
+	c := 0
+	dp := 0
+	for _ = range upd {
+		c++
+		fmt.Print("\r[")
+		dp = c * progressScale / total
+		for i := 0; i < progressScale; i++ {
+			if dp > i {
+				fmt.Print("=")
+			} else {
+				fmt.Print(" ")
+			}
+		}
+		fmt.Printf("] %02d%%", int(float64(c)/float64(total)*100))
+	}
+	done <- struct{}{}
+}
+
+func worker(sc scene, in chan *view, done chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for w := range in {
 		draw(sc, w)
+		done <- struct{}{}
 	}
 }
 
@@ -113,17 +161,17 @@ func draw(sc scene, v *view) {
 	})
 }
 
-func save(v view, fname string) {
+func save(v view, fname string) error {
 	out, err := os.Create(fname)
 	if err != nil {
-		log.Println(err)
-		return
+		return err
 	}
 	defer out.Close()
 
 	if err = png.Encode(out, v); err != nil {
-		log.Println(err)
+		return err
 	}
+	return nil
 }
 
 type scene struct {
@@ -137,7 +185,6 @@ type view struct {
 }
 
 func (v view) sub(x1, x2, y1, y2 int) *view {
-	fmt.Println(x1, x2, y1, y2)
 	res := v
 
 	// make a separate copy of v.c to prevent modifying v.c[i] slices
