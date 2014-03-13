@@ -1,6 +1,5 @@
 // TODO:
 // - write tests for all new funcs
-// - parallelize
 // - read scene info from json file
 // - cleanup
 
@@ -19,13 +18,13 @@ import (
 )
 
 const (
-	width         = 10000
-	height        = 10000
-	ambient       = 0.1
-	chunkw        = 256 // chunk width for pardraw
-	chunkh        = 256 // chunk height for pardraw
-	progressScale = 50
-	outfname      = "out.png"
+	width         = 10000     // width of resulting image
+	height        = 10000     // height of resulting image
+	ambient       = 0.1       // ambient lighting
+	chunkw        = 256       // chunk width for pardraw
+	chunkh        = 256       // chunk height for pardraw
+	progressScale = 50        // scale of progress bar
+	outfname      = "out.png" // output file name
 )
 
 func main() {
@@ -34,9 +33,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+
 	start := time.Now()
+	// render useing GOMAXPROCS workers
 	pardraw(sc, &v, runtime.GOMAXPROCS(0))
-	fmt.Println("\nrendered in", time.Since(start))
+	fmt.Println("rendered in", time.Since(start))
+
 	fmt.Println("writing to", outfname)
 	if err = save(v, outfname); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -45,6 +47,17 @@ func main() {
 	fmt.Println("done")
 }
 
+// readInput reads input data:
+// - list of objects
+// - location of camera (eye)
+// - location of light source
+// - view rectangle, with initial pixel table (background),
+// will potentially replace with viewing angle and distance of eye
+//
+// returns assembled scene struct and view
+// returned error is not nil in case reading or parsing failed
+//
+// hardcoded for now
 func readInput() (scene, view, error) {
 	sc := scene{
 		objs: []obj{
@@ -78,13 +91,15 @@ func readInput() (scene, view, error) {
 	return sc, v, nil
 }
 
-// nw - number of concurrent workers
+// pardraw splits view into chunks and renders them using
+// a pool of workers. Pool size is nw.
 func pardraw(sc scene, v *view, nw int) {
-	// start workers
 	wg := &sync.WaitGroup{}
-	out := make(chan *view)
-	upd := make(chan struct{})
-	done := make(chan struct{})
+	out := make(chan *view)     // chunks
+	upd := make(chan struct{})  // updates for progress bar
+	done := make(chan struct{}) // synchronization for progress bar
+
+	// start workers
 	for i := 0; i < nw; i++ {
 		wg.Add(1)
 		go worker(sc, out, upd, wg)
@@ -96,6 +111,7 @@ func pardraw(sc scene, v *view, nw int) {
 	// send chunks to process
 	for x := 0; x < len(v.c[0]); x += chunkw {
 		for y := 0; y < len(v.c); y += chunkh {
+			// cut new chunk and send to a worker
 			nc := v.sub(
 				x, min(x+chunkw, len(v.c[0])),
 				y, min(y+chunkh, len(v.c)))
@@ -105,10 +121,13 @@ func pardraw(sc scene, v *view, nw int) {
 	// signal workers to stop and wait for them
 	close(out)
 	wg.Wait()
+	// let progress bar finish properly to avoid further printing overlap
 	close(upd)
 	<-done
 }
 
+// progress draws and updates an ASCII progress bar
+// each receive from upd signifies one of total progress points
 func progress(total int, upd, done chan struct{}) {
 	c := 0
 	dp := 0
@@ -125,24 +144,34 @@ func progress(total int, upd, done chan struct{}) {
 		}
 		fmt.Printf("] %02d%%", int(float64(c)/float64(total)*100))
 	}
+	fmt.Println()
 	done <- struct{}{}
 }
 
-func worker(sc scene, in chan *view, done chan struct{}, wg *sync.WaitGroup) {
+// worker reads view chunks on in channel and renders them, sending
+// a message on upd after each chunk
+func worker(sc scene, in chan *view, upd chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for w := range in {
 		draw(sc, w)
-		done <- struct{}{}
+		upd <- struct{}{}
 	}
 }
 
+// draw renders specified view by shooting out rays
+// from eye trough each pixel on view and analyzing closest intersection
 func draw(sc scene, v *view) {
 	v.foreach(func(x, y int, p point) {
+		// ray from eye trough {x,y} on view
 		r := ray{start: sc.eye, vec: point{p.x - sc.eye.x, p.y - sc.eye.y, p.z - sc.eye.z}}
+
 		var fobj obj
 		var fp point
+
+		// smallest distance to intersection
 		mind := math.MaxFloat64
 		for _, v := range sc.objs {
+			// for each object on scene, find intersections if any, store the closest one
 			hits := v.intersect(r)
 			for _, p := range hits {
 				d := distpp(p, r.start)
@@ -157,10 +186,12 @@ func draw(sc scene, v *view) {
 			// no intersections, keep default color
 			return
 		}
+		// determine ray color and set pixel
 		v.c[y][x] = fobj.rayc(fp, sc.light)
 	})
 }
 
+// save saves rendered view to file named fname as png
 func save(v view, fname string) error {
 	out, err := os.Create(fname)
 	if err != nil {
@@ -180,10 +211,13 @@ type scene struct {
 }
 
 type view struct {
-	e1, e2, e3, e4 point
-	c              [][]color.RGBA
+	e1, e2, e3, e4 point          // 4 corners of view in 3d space. expected to be in order, clockwise
+	c              [][]color.RGBA // grid of pixels
 }
 
+// sub returns a part of v that is defined by provided coordinates (applied to v.c)
+// e1..e4 are also updated for resulting view
+// returned view shares the same underlying memory for c
 func (v view) sub(x1, x2, y1, y2 int) *view {
 	res := v
 
@@ -194,6 +228,9 @@ func (v view) sub(x1, x2, y1, y2 int) *view {
 	for i := range res.c {
 		res.c[i] = res.c[i][x1:x2]
 	}
+
+	// update all the corner coordinates. very fragile, update with caution
+	// i'd wish i knew a better way...
 	res.e1 = point{
 		x: v.e1.x + (v.e2.x-v.e1.x)*(float64(len(v.c[0])-x2))/float64(len(v.c[0])) + (v.e4.x-v.e1.x)*float64(y1)/float64(len(v.c)),
 		y: v.e1.y + (v.e2.y-v.e1.y)*(float64(len(v.c[0])-x2))/float64(len(v.c[0])) + (v.e4.y-v.e1.y)*float64(y1)/float64(len(v.c)),
@@ -217,11 +254,14 @@ func (v view) sub(x1, x2, y1, y2 int) *view {
 	return &res
 }
 
+// foreach runs f for each pixel on v.c
+// f arguments are x, y coordinates on v.c and a corresponding point in space
 func (v view) foreach(f func(int, int, point)) {
 	w := len(v.c) - 1
 	h := len(v.c[0]) - 1
 	for i := 0; i < h+1; i++ {
 		c1 := float64(i) / float64(h)
+		//a and b are two ends of a row
 		a := point{
 			x: v.e2.x + (v.e1.x-v.e2.x)*c1,
 			y: v.e2.y + (v.e1.y-v.e2.y)*c1,
@@ -248,8 +288,11 @@ func (s view) ColorModel() color.Model { return color.RGBAModel }
 func (s view) Bounds() image.Rectangle { return image.Rect(0, 0, len(s.c[0]), len(s.c)) }
 func (s view) At(x, y int) color.Color { return s.c[y][x] }
 
+// obj is an interfaces that each type of object should implement
 type obj interface {
+	// intersect returns all points of intersection with l
 	intersect(l ray) []point
+	// rayc returns color of p on surface of obj if light source is in l
 	rayc(p, l point) color.RGBA
 }
 
@@ -272,7 +315,8 @@ func distrp(l ray, p point) float64 {
 	return distpp(p, l.projp(p))
 }
 
-// vec - from point zero, not start
+// ray is a combination of start point and direction vector
+// vec - end of vector from point zero, not start
 type ray struct {
 	start, vec point
 }
@@ -343,6 +387,9 @@ func (s sphere) intersect(l ray) []point {
 }
 
 func (s sphere) rayc(p, l point) color.RGBA {
+	// create ray from p with direction s.centre -> p
+	// create ray from p to l
+	// calculate angle between them and based on s.c return res
 	lenr := distpp(l, p)
 	lenn := distpp(p, s.center)
 
@@ -370,6 +417,7 @@ func (s sphere) rayc(p, l point) color.RGBA {
 	return res
 }
 
+// dot product of two vectors
 func dotProd(a, b ray) float64 {
 	return a.vec.x*b.vec.x + a.vec.y*b.vec.y + a.vec.z*b.vec.z
 }
