@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	width         = 10000     // width of resulting image
-	height        = 10000     // height of resulting image
+	width         = 1000      // width of resulting image
+	height        = 1000      // height of resulting image
 	ambient       = 0.1       // ambient lighting
 	chunkw        = 256       // chunk width for pardraw
 	chunkh        = 256       // chunk height for pardraw
